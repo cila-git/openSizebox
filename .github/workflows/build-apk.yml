@@ -1,0 +1,121 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GODOT_VERSION: "3.5.3"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scarica solo i modelli usati (Git LFS)
+        run: |
+          git lfs pull --include="models/Alice/*,models/lily/*,models/anata/*,models/terrain/*"
+          for f in models/Alice/alice.glb models/lily/lily.glb models/anata/anata.glb; do
+            s=$(stat -c%s "$f")
+            echo "$f = $s byte"
+            if [ "$s" -lt 100000 ]; then
+              echo "ERRORE: $f e' ancora un segnaposto LFS (quota LFS esaurita?)"; exit 1
+            fi
+          done
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Installa Godot e template di export
+        run: |
+          V=$GODOT_VERSION
+          B=https://github.com/godotengine/godot/releases/download/${V}-stable
+          wget -q $B/Godot_v${V}-stable_linux_headless.64.zip
+          unzip -q Godot_v${V}-stable_linux_headless.64.zip
+          sudo mv Godot_v${V}-stable_linux_headless.64 /usr/local/bin/godot
+          wget -q $B/Godot_v${V}-stable_export_templates.tpz
+          mkdir -p ~/.local/share/godot/templates/${V}.stable tpl
+          unzip -q Godot_v${V}-stable_export_templates.tpz -d tpl
+          mv tpl/templates/* ~/.local/share/godot/templates/${V}.stable/
+          godot --version
+
+      - name: Android SDK e keystore di debug
+        run: |
+          SDK=${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}
+          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+          $SDK/cmdline-tools/latest/bin/sdkmanager "build-tools;30.0.3" "platform-tools" "platforms;android-29"
+          keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android \
+            -keystore $HOME/debug.keystore -storepass android \
+            -dname "CN=Android Debug,O=Android,C=US" -validity 9999
+          mkdir -p ~/.config/godot
+          cat > ~/.config/godot/editor_settings-3.tres <<TRES
+          [gd_resource type="EditorSettings" format=2]
+
+          [resource]
+          export/android/android_sdk_path = "$SDK"
+          export/android/debug_keystore = "$HOME/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          export/android/force_system_user = false
+          export/android/shutdown_adb_on_exit = true
+          TRES
+
+      - name: Preset di export Android e schermo orizzontale
+        run: |
+          cat > export_presets.cfg <<'CFG'
+          [preset.0]
+
+          name="Android"
+          platform="Android"
+          runnable=true
+          custom_features=""
+          export_filter="all_resources"
+          include_filter=""
+          exclude_filter="models/unused/*, *.md, jietu*.png"
+          export_path="build/openSizebox.apk"
+          script_export_mode=1
+          script_encryption_key=""
+
+          [preset.0.options]
+
+          custom_template/debug=""
+          custom_template/release=""
+          custom_build/use_custom_build=false
+          architectures/armeabi-v7a=false
+          architectures/arm64-v8a=true
+          architectures/x86=false
+          architectures/x86_64=false
+          keystore/debug=""
+          keystore/release=""
+          version/code=1
+          version/name="1.0"
+          package/unique_name="com.opensizebox.mobile"
+          package/name="openSizebox"
+          package/signed=true
+          package/classify_as_game=true
+          screen/immersive_mode=true
+          CFG
+          python3 - <<'PY'
+          p = open('project.godot').read().split('\n')
+          if '[display]' in p:
+              p.insert(p.index('[display]') + 1, 'window/handheld/orientation=0')
+          else:
+              p += ['', '[display]', '', 'window/handheld/orientation=0']
+          open('project.godot', 'w').write('\n'.join(p))
+          PY
+
+      - name: Importa risorse
+        run: timeout 900 godot --path . --editor --quit || true
+
+      - name: Esporta APK
+        run: |
+          mkdir -p build
+          godot --path . --export-debug "Android" build/openSizebox.apk
+          ls -la build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openSizebox-apk
+          path: build/openSizebox.apk
