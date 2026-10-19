@@ -14,7 +14,8 @@ jobs:
 
       - name: Scarica solo i modelli usati (Git LFS)
         run: |
-          git lfs pull --include="models/Alice/*,models/lily/*,models/anata/*,models/terrain/*"
+          git lfs pull --exclude="models/unused/*"
+          rm -rf models/unused
           for f in models/Alice/alice.glb models/lily/lily.glb models/anata/anata.glb; do
             s=$(stat -c%s "$f")
             echo "$f = $s byte"
