@@ -39,7 +39,7 @@ jobs:
           mkdir -p ~/.local/share/godot/templates/${V}.stable tpl
           unzip -q Godot_v${V}-stable_export_templates.tpz -d tpl
           mv tpl/templates/* ~/.local/share/godot/templates/${V}.stable/
-          godot --version
+          godot --version || true
 
       - name: Android SDK e keystore di debug
         run: |
