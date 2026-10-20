@@ -1,0 +1,164 @@
+name: Test grafica
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: ["3.5.3", "3.6"]
+        driver: ["GLES2", "GLES3"]
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Installa Godot e template
+        run: |
+          V=${{ matrix.godot }}
+          B=https://github.com/godotengine/godot/releases/download/${V}-stable
+          wget -q $B/Godot_v${V}-stable_linux_headless.64.zip
+          unzip -q Godot_v${V}-stable_linux_headless.64.zip
+          sudo mv Godot_v${V}-stable_linux_headless.64 /usr/local/bin/godot
+          wget -q $B/Godot_v${V}-stable_export_templates.tpz
+          mkdir -p ~/.local/share/godot/templates/${V}.stable tpl
+          unzip -q Godot_v${V}-stable_export_templates.tpz -d tpl
+          mv tpl/templates/* ~/.local/share/godot/templates/${V}.stable/
+          godot --version || true
+
+      - name: Android SDK e keystore di debug
+        run: |
+          SDK=${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}
+          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+          $SDK/cmdline-tools/latest/bin/sdkmanager "build-tools;30.0.3" "build-tools;33.0.2" "platform-tools" "platforms;android-29" "platforms;android-33"
+          keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android \
+            -keystore $HOME/debug.keystore -storepass android \
+            -dname "CN=Android Debug,O=Android,C=US" -validity 9999
+          mkdir -p ~/.config/godot
+          cat > ~/.config/godot/editor_settings-3.tres <<TRES
+          [gd_resource type="EditorSettings" format=2]
+
+          [resource]
+          export/android/android_sdk_path = "$SDK"
+          export/android/debug_keystore = "$HOME/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          export/android/force_system_user = false
+          export/android/shutdown_adb_on_exit = true
+          TRES
+
+      - name: Crea il progetto di prova
+        run: |
+          mkdir proj && cd proj
+          cat > project.godot <<'EOF2'
+          config_version=4
+
+          [application]
+
+          config/name="Test grafica"
+          run/main_scene="res://main.tscn"
+
+          [display]
+
+          window/handheld/orientation=0
+          window/stretch/mode="2d"
+          window/stretch/aspect="expand"
+
+          [rendering]
+
+          quality/driver/driver_name="${{ matrix.driver }}"
+          EOF2
+          cat > main.tscn <<'EOF2'
+          [gd_scene load_steps=2 format=2]
+
+          [ext_resource path="res://main.gd" type="Script" id=1]
+
+          [node name="Main" type="Control"]
+          anchor_right = 1.0
+          anchor_bottom = 1.0
+          script = ExtResource( 1 )
+
+          [node name="bg" type="ColorRect" parent="."]
+          anchor_right = 1.0
+          anchor_bottom = 1.0
+          color = Color( 0.2, 0.6, 0.3, 1 )
+
+          [node name="info" type="Label" parent="."]
+          anchor_right = 1.0
+          anchor_bottom = 1.0
+          align = 1
+          valign = 1
+          EOF2
+          cat > main.gd <<'EOF2'
+          extends Control
+
+          var taps = 0
+          var t = 0.0
+
+          func _input(event):
+              if event is InputEventScreenTouch and event.pressed:
+                  taps += 1
+
+          func _process(delta):
+              t += delta
+              var s = "TEST OK\n"
+              s += "godot: " + Engine.get_version_info()["string"] + "\n"
+              s += "driver: " + OS.get_video_driver_name(OS.get_current_video_driver()) + "\n"
+              s += "gpu: " + VisualServer.get_video_adapter_name() + "\n"
+              s += "vendor: " + VisualServer.get_video_adapter_vendor() + "\n"
+              s += "fps: " + str(Engine.get_frames_per_second()) + "\n"
+              s += "mem: " + str(OS.get_static_memory_usage() / 1048576) + " MB\n"
+              s += "schermo: " + str(OS.window_size) + "\n"
+              s += "tempo: " + str(int(t)) + " s   tocchi: " + str(taps)
+              $info.text = s
+          EOF2
+
+      - name: Preset ed export
+        run: |
+          T=$(echo "${{ matrix.godot }}" | tr -d .)
+          D=$(echo "${{ matrix.driver }}" | tr A-Z a-z)
+          cat > proj/export_presets.cfg <<CFG
+          [preset.0]
+
+          name="Android"
+          platform="Android"
+          runnable=true
+          custom_features=""
+          export_filter="all_resources"
+          include_filter=""
+          exclude_filter=""
+          export_path="out/test.apk"
+          script_export_mode=1
+          script_encryption_key=""
+
+          [preset.0.options]
+
+          custom_template/debug=""
+          custom_template/release=""
+          custom_build/use_custom_build=false
+          architectures/armeabi-v7a=false
+          architectures/arm64-v8a=true
+          architectures/x86=false
+          architectures/x86_64=false
+          keystore/debug=""
+          keystore/release=""
+          version/code=1
+          version/name="1.0"
+          package/unique_name="com.gtest.v${T}.${D}"
+          package/name="Test ${{ matrix.godot }} ${{ matrix.driver }}"
+          package/signed=true
+          screen/immersive_mode=true
+          CFG
+          mkdir -p proj/out
+          godot --path proj --export-debug "Android" out/test.apk
+          ls -la proj/out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-godot${{ matrix.godot }}-${{ matrix.driver }}
+          path: proj/out/test.apk
