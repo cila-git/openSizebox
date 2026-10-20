@@ -238,15 +238,16 @@ jobs:
           # Adatta il progetto a Android/touch. Eseguito dalla radice del progetto.
           p = open('project.godot', encoding='utf-8').read()
           p = p.replace('window/stretch/aspect="keep"', 'window/stretch/aspect="expand"')
+          p = p.replace('window/stretch/mode="2d"', 'window/stretch/mode="viewport"')
           lines = p.split('\n')
           if '[display]' in lines:
               lines.insert(lines.index('[display]') + 1, 'window/handheld/orientation=0')
           else:
               lines += ['', '[display]', '', 'window/handheld/orientation=0']
           if '[rendering]' in lines:
-              lines.insert(lines.index('[rendering]') + 1, 'quality/driver/fallback_to_gles2=true')
+              lines.insert(lines.index('[rendering]') + 1, 'quality/driver/driver_name="GLES2"')
           else:
-              lines += ['', '[rendering]', '', 'quality/driver/fallback_to_gles2=true']
+              lines += ['', '[rendering]', '', 'quality/driver/driver_name="GLES2"']
           lines += ['', '[autoload]', '', 'TouchControls="*res://script/touch/TouchControls.gd"', '']
           open('project.godot', 'w', encoding='utf-8').write('\n'.join(lines))
 
@@ -263,6 +264,12 @@ jobs:
           t += '\t$v.rotate_object_local(Vector3.RIGHT, -clamp(rel.y, -30, 30) * mouse_sense)\n'
           open('script/Third.gd', 'w', encoding='utf-8').write(t)
           print('patch ok')
+
+          env = '[gd_resource type="Environment" format=2]\n\n[resource]\n'
+          env += 'background_mode = 1\nbackground_color = Color( 0.55, 0.7, 0.9, 1 )\n'
+          env += 'ambient_light_color = Color( 0.75, 0.75, 0.8, 1 )\nambient_light_energy = 1.0\n'
+          open('default_env.tres', 'w', encoding='utf-8').write(env)
+          print('ambiente leggero ok')
           PY
           python3 mobile_patch.py
 
